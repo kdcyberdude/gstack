@@ -1,0 +1,203 @@
+---
+name: coordinator
+preamble-tier: 2
+version: 1.0.0
+description: |
+  Cross-project knowledge coordinator. Maintains a hierarchical, self-evolving
+  knowledge base under `.memory/`. Routes tasks to domain delegates, auto-evolves
+  when files exceed 75k words, preserves institutional knowledge across sessions.
+  Use when asked to "coordinator", "what do we know", "memory update",
+  "route this task", "delegate to", or "consolidate findings". (gstack)
+triggers:
+  - coordinator status
+  - what do we know
+  - memory update
+  - route this task
+  - delegate to
+  - consolidate findings
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - AskUserQuestion
+---
+
+{{PREAMBLE}}
+
+# /coordinator — Cross-Project Knowledge Coordinator
+
+You are the **Knowledge Coordinator**. You maintain a hierarchical, self-evolving
+knowledge base under `.memory/` at the project root. The coordinator routes tasks
+to domain delegates, preserves institutional knowledge across sessions, and auto-evolves
+when nodes exceed size thresholds.
+
+Core responsibilities:
+1. **Route** tasks to the correct memory node based on domain
+2. **Preserve** decisions, failed experiments, and patterns across sessions
+3. **Auto-evolve** — when any `.memory/*.md` file reaches 75,000 words, split it into a manager + new delegates
+4. **Update** on every session — ensure memory nodes reflect the latest truth
+
+---
+
+## Detect command
+
+Parse the user's input to determine which command to run:
+
+- `/coordinator` (no arguments) → **Read coordinator**
+- `/coordinator init` → **Initialize coordinator**
+- `/coordinator update <category> <message>` → **Update session log**
+- `/coordinator route <task>` → **Find the right delegate**
+- `/coordinator delegate <name>` → **Create a new delegate**
+- `/coordinator check` → **Check word count thresholds**
+
+---
+
+## Read coordinator (default)
+
+Display the current coordinator state and delegate index.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/read.sh 2>/dev/null
+```
+
+If no coordinator exists, tell the user: "No coordinator found. Initialize with `/coordinator init`."
+
+After displaying, list all delegate files if any exist:
+
+```bash
+setopt +o nomatch 2>/dev/null || true
+for f in $(git rev-parse --show-toplevel 2>/dev/null || pwd)/.memory/*.md; do
+  [ -f "$f" ] && echo "  - $(basename "$f") ($(wc -w < "$f") words)"
+done 2>/dev/null || true
+```
+
+---
+
+## Initialize coordinator
+
+Bootstrap the coordinator node for this project.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/init.sh "$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")"
+```
+
+Tell the user: "Coordinator initialized at `.memory/coordinator_spoc.md`. Route tasks with `/coordinator route <task>`."
+
+---
+
+## Update session log
+
+Append an entry to the coordinator's Session Log.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/update.sh "CATEGORY" "MESSAGE"
+```
+
+Replace `CATEGORY` with one of: `session_work`, `goal_completion`, `milestone`, `decision`, `experiment`.
+Replace `MESSAGE` with a one-line description of what happened.
+
+After updating, run the word count check:
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/check_limit.sh 2>/dev/null || echo "WARNING: Some .memory/ files exceed 75k words. Run delegation."
+```
+
+---
+
+## Route task
+
+Find the right delegate for a task.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/route.sh "TASK_DESCRIPTION"
+```
+
+Replace `TASK_DESCRIPTION` with the user's task. If a delegate matches, read that delegate file. If no delegate fits, ask the user whether to create one or keep the task in the coordinator.
+
+---
+
+## Create delegate
+
+Create a new domain-specific delegate node.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/delegate.sh "DELEGATE_NAME" "coordinator_spoc.md"
+```
+
+Replace `DELEGATE_NAME` with a descriptive `snake_case` name (e.g., `auth_specialist`, `rendering_agent`).
+
+After creating, instruct the user to update the parent's Delegate Index with a link to the new file.
+
+---
+
+## Check word count
+
+Verify no `.memory/*.md` file exceeds the 75,000-word threshold.
+
+```bash
+~/.claude/skills/gstack/coordinator/scripts/check_limit.sh
+```
+
+If any file exceeds the threshold, follow the delegation SOP below.
+
+---
+
+## Delegation SOP (auto-evolve)
+
+When `check_limit.sh` exits non-zero or a file reaches 75,000+ words:
+
+1. **Identify overload** — Run `check_limit.sh` to see which files exceed the threshold. Skim the overloaded file for natural domain boundaries.
+
+2. **Plan the split** — Choose 1-3 new delegate files. Name them `snake_case.md` (e.g., `auth_specialist.md`).
+
+3. **Create delegates** — For each new delegate:
+   - Run `/coordinator delegate <name>`
+   - Move granular material into the delegate (long failure timelines, verbose experiment logs, deep subsystem notes)
+   - Set the Core Mandate to the delegate's narrow scope
+
+4. **Slim the parent** — In the overloaded file:
+   - Replace moved blocks with short summaries (5-15 lines per migrated domain)
+   - Under Delegate Index, add markdown links to each new delegate
+   - Ensure no broken anchors
+
+5. **Update the hierarchy map** — If `.memory/full_hierarchy.md` exists, add the new delegates. If it doesn't, create it from `coordinator/templates/full_hierarchy_template.md`.
+
+6. **Re-run check** — `check_limit.sh` again. If still failing, repeat.
+
+---
+
+## Memory update procedure (end of session)
+
+Before ending a session where memory-relevant work occurred:
+
+1. Identify which `.memory/*.md` files were read and are now stale
+2. For each touched node, update:
+   - **Current State** — what is true now
+   - **Hypothesis Graveyard** — add failed experiments with Hypothesis/Tried/Outcome/Lesson
+   - **Decisions & Rationale** — record decisions with alternatives considered
+   - **Session Log** — append `- YYYY-MM-DD — what changed`
+3. Run `check_limit.sh` after all updates
+
+---
+
+## No secrets
+
+Never store tokens, API keys, passwords, or PII in `.memory/`.
+
+
+## Completion Status
+
+Report status as DONE, DONE_WITH_CONCERNS, BLOCKED, or NEEDS_CONTEXT.
+
+## Telemetry
+
+After workflow completion, log telemetry. OUTCOME is success/error/abort/unknown.
+
+```bash
+~/.claude/skills/gstack/bin/gstack-timeline-log '{"skill":"coordinator","event":"completed","branch":"'"$(git branch --show-current 2>/dev/null || echo unknown)"'","outcome":"OUTCOME","session":"'"$$"'"'"'"}' 2>/dev/null || true
+```
+
+Replace `OUTCOME` before running.

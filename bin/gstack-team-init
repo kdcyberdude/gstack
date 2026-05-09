@@ -31,6 +31,20 @@ GENERATED=()
 
 # ── Migrate vendored copy if present ──────────────────────────
 
+# ── Gitignore: add .goal/ and .memory/ if not present ──────────
+
+if [ -f "$REPO_ROOT/.gitignore" ]; then
+  if ! grep -qF '.goal/' "$REPO_ROOT/.gitignore" 2>/dev/null; then
+    echo '.goal/' >> "$REPO_ROOT/.gitignore"
+  fi
+  if ! grep -qF '.memory/' "$REPO_ROOT/.gitignore" 2>/dev/null; then
+    echo '.memory/' >> "$REPO_ROOT/.gitignore"
+  fi
+else
+  printf '.goal/\n.memory/\n' > "$REPO_ROOT/.gitignore"
+  GENERATED+=(".gitignore")
+fi
+
 if [ -d "$REPO_ROOT/.claude/skills/gstack" ] && [ ! -L "$REPO_ROOT/.claude/skills/gstack" ]; then
   if [ -f "$REPO_ROOT/.claude/skills/gstack/VERSION" ] || [ -d "$REPO_ROOT/.claude/skills/gstack/.git" ]; then
     echo "  Found vendored gstack copy at $REPO_ROOT/.claude/skills/gstack"

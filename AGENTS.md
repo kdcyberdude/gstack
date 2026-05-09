@@ -27,6 +27,8 @@ Invoke them by name (e.g., `/office-hours`).
 | Skill | What it does |
 |-------|-------------|
 | `/review` | Pre-landing PR review. Finds bugs that pass CI but break in prod. |
+| `/receiving-code-review` | Handle review feedback without performative agreement. Verify first. |
+| `/test-driven-development` | RED-GREEN-REFACTOR cycle. Tests before code, always. |
 | `/codex` | Second opinion via OpenAI Codex. Review, challenge, or consult modes. |
 | `/investigate` | Systematic root-cause debugging. No fixes without investigation. |
 | `/design-review` | Live-site visual audit + fix loop with atomic commits. |

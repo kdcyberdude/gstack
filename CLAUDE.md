@@ -770,6 +770,8 @@ Key routing rules:
 - Bugs/errors → invoke /investigate
 - QA/testing site behavior → invoke /qa or /qa-only
 - Code review/diff check → invoke /review
+- Review feedback/receiving code review → invoke /receiving-code-review
+- TDD/test-first implementation → invoke /test-driven-development
 - Visual polish → invoke /design-review
 - Ship/deploy/PR → invoke /ship or /land-and-deploy
 - Save progress → invoke /context-save
