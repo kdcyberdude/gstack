@@ -47,7 +47,8 @@ describe('cursor skill dedup setup', () => {
 
   beforeEach(() => {
     tmpHome = mkTmpHome();
-    repoDir = path.join(tmpHome, '.claude', 'skills', 'gstack');
+    fs.mkdirSync(path.join(tmpHome, '.cursor'), { recursive: true });
+    repoDir = path.join(tmpHome, '.gstack', 'repos', 'gstack');
     fs.mkdirSync(repoDir, { recursive: true });
     execSync(
       `rsync -a --exclude node_modules --exclude .git "${ROOT}/" "${repoDir}/"`,
@@ -73,6 +74,7 @@ describe('cursor skill dedup setup', () => {
       expect(countSkillDirs(cursorSkills, 'gstack-scrape')).toBe(1);
       expect(fs.existsSync(path.join(cursorSkills, 'gstack', 'goal', 'SKILL.md'))).toBe(true);
       expect(fs.existsSync(path.join(cursorSkills, 'gstack-goal', 'SKILL.md'))).toBe(false);
+      expect(countSkillDirs(path.join(tmpHome, '.codex', 'skills'), 'gstack-scrape')).toBe(0);
       expect(countSkillDirs(path.join(repoDir, '.cursor', 'skills'), 'gstack-scrape')).toBe(0);
       expect(countSkillDirs(path.join(repoDir, '.agents', 'skills'), 'gstack-scrape')).toBe(0);
     },

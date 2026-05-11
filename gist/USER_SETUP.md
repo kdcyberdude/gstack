@@ -38,7 +38,8 @@ which node 2>/dev/null && echo "NODE: $(node --version)" || echo "NODE: MISSING"
 
 # Detect existing installations
 echo "=== Existing gstack ==="
-ls -d ~/.claude/skills/gstack 2>/dev/null && echo "  claude: EXISTS" || echo "  claude: NOT FOUND"
+ls -d ~/.gstack/repos/gstack 2>/dev/null && echo "  repo: EXISTS" || echo "  repo: NOT FOUND"
+ls -d ~/.claude/skills/gstack 2>/dev/null && echo "  legacy claude checkout: EXISTS" || echo "  legacy claude checkout: NOT FOUND"
 ls -d ~/.codex/skills/gstack 2>/dev/null && echo "  codex: EXISTS" || echo "  codex: NOT FOUND"
 ls -d ~/.cursor/skills/gstack 2>/dev/null && echo "  cursor: EXISTS" || echo "  cursor: NOT FOUND"
 
@@ -69,22 +70,23 @@ Wait for user confirmation before installing any prerequisite.
 ### Step 1.1 — Clone or update gstack
 
 ```bash
-# Clone to the canonical location
-if [ ! -d "$HOME/.claude/skills/gstack" ]; then
-  git clone --single-branch --depth 1 https://github.com/kdcyberdude/gstack.git "$HOME/.claude/skills/gstack"
+# Clone to the canonical location outside Cursor/Claude skill discovery roots
+if [ ! -d "$HOME/.gstack/repos/gstack" ]; then
+  mkdir -p "$HOME/.gstack/repos"
+  git clone --single-branch --depth 1 https://github.com/kdcyberdude/gstack.git "$HOME/.gstack/repos/gstack"
 else
-  cd "$HOME/.claude/skills/gstack" && git pull --rebase || true
+  cd "$HOME/.gstack/repos/gstack" && git pull --rebase || true
 fi
 ```
 
-**Cursor dedup rule:** keep the checkout at `~/.claude/skills/gstack` only. Do **not** copy or clone the full gstack repo into `~/.agents/skills/gstack` or `~/.cursor/skills/gstack`. Cursor walks `~/.claude/skills`, `~/.cursor/skills`, and `~/.agents/skills` recursively; extra copies of generated host skill trees register the same slash command many times.
+**Cursor dedup rule:** keep the checkout at `~/.gstack/repos/gstack`. Do **not** keep a full checkout under `~/.claude/skills/gstack`, `~/.agents/skills/gstack`, or `~/.cursor/skills/gstack`. Cursor walks `~/.claude/skills`, `~/.cursor/skills`, `~/.codex/skills`, and `~/.agents/skills` recursively; extra copies of generated host skill trees register the same slash command many times. `./setup` migrates legacy `~/.claude/skills/gstack` installs out of that tree and removes duplicate Codex/Claude shim links when Cursor is detected.
 
 ### Step 1.2 — Run `./setup` for each detected provider
 
 Execute each sequentially. The `./setup` script auto-detects providers, but use `--host` to be explicit.
 
 ```bash
-cd "$HOME/.claude/skills/gstack"
+cd "$HOME/.gstack/repos/gstack"
 
 # Run setup for ALL detected hosts (auto-detect mode)
 ./setup
@@ -106,16 +108,16 @@ After setup, verify skills were installed for each provider:
 
 ```bash
 echo "=== gstack verification ==="
-ls ~/.claude/skills/gstack/browse/SKILL.md 2>/dev/null && echo "Claude: browse skill OK" || echo "Claude: browse skill MISSING"
-ls ~/.codex/skills/gstack-browse/SKILL.md 2>/dev/null && echo "Codex: browse skill OK" || echo "Codex: browse skill MISSING"
+ls "$HOME/.gstack/repos/gstack/browse/SKILL.md" 2>/dev/null && echo "Repo: browse source OK" || echo "Repo: browse source MISSING"
 ls ~/.cursor/skills/gstack-browse/SKILL.md 2>/dev/null && echo "Cursor: browse skill OK" || echo "Cursor: browse skill MISSING"
+ls ~/.codex/skills/gstack-browse/SKILL.md 2>/dev/null && echo "Codex: browse skill OK" || echo "Codex: browse skill MISSING (expected when Cursor is primary)"
 ```
 
 If any provider is MISSING, ask the user whether to troubleshoot or skip that provider.
 
 ### Step 1.4 — Verify Cursor slash commands are not duplicated
 
-After `./setup --host cursor` (or `./setup` with Cursor detected), each `gstack-*` command should appear once in Agent chat. Generated Cursor/Codex skill trees live under `~/.gstack/generated/`; the checkout should not retain `.cursor/skills` or `.agents/skills` caches when installed under `~/.claude/skills/gstack`.
+After `./setup --host cursor` (or `./setup` with Cursor detected), each `gstack-*` command should appear once in Agent chat. Generated Cursor/Codex skill trees live under `~/.gstack/generated/`; the checkout at `~/.gstack/repos/gstack` should not retain `.cursor/skills` or `.agents/skills` caches.
 
 ```bash
 python3 - <<'PY'
@@ -134,17 +136,18 @@ def count(root, folder):
 roots = [
     os.path.expanduser("~/.cursor/skills"),
     os.path.expanduser("~/.claude/skills"),
+    os.path.expanduser("~/.codex/skills"),
     os.path.expanduser("~/.agents/skills"),
 ]
 for root in roots:
     print(root, "gstack-scrape", count(root, "gstack-scrape"))
-repo = os.path.expanduser("~/.claude/skills/gstack")
+repo = os.path.expanduser("~/.gstack/repos/gstack")
 for sub in (".cursor/skills", ".agents/skills"):
     print(repo + "/" + sub, count(repo + "/" + sub, "gstack-scrape"))
 PY
 ```
 
-Expected: one `gstack-scrape` under `~/.cursor/skills`, zero under the checkout's `.cursor/skills` and `.agents/skills`. Start a **new Agent chat** after setup so Cursor reloads skills.
+Expected: one `gstack-scrape` under `~/.cursor/skills`, zero under the other roots and zero under the checkout's `.cursor/skills` and `.agents/skills`. Start a **new Agent chat** after setup so Cursor reloads skills.
 
 ---
 
@@ -365,7 +368,7 @@ Available CE skills: /ce-setup, /ce-strategy, /ce-ideate, /ce-brainstorm,
 
 ```bash
 # Start the browse daemon and verify it launches
-cd ~/.claude/skills/gstack && bun run build 2>&1 | tail -5
+cd ~/.gstack/repos/gstack && bun run build 2>&1 | tail -5
 ```
 
 ### Step 4.3 — Final verification checklist
@@ -395,15 +398,15 @@ Run through this checklist and report status:
 
 | Problem | Fix |
 |---------|-----|
-| Skill not showing up in Claude Code | `cd ~/.claude/skills/gstack && ./setup` |
-| `/browse` fails | `cd ~/.claude/skills/gstack && bun install && bun run build` |
-| Codex says "invalid SKILL.md" | `cd ~/.codex/skills/gstack && git pull && ./setup --host codex` |
+| Skill not showing up in Claude Code | `cd ~/.gstack/repos/gstack && ./setup --host claude` |
+| `/browse` fails | `cd ~/.gstack/repos/gstack && bun install && bun run build` |
+| Codex says "invalid SKILL.md" | `cd ~/.gstack/repos/gstack && ./setup --host codex` |
 | CE skills work but delegation fails (Codex) | Run `bunx @every-env/compound-plugin install compound-engineering --to codex` |
 | GBrain `Aborted()` on first run | Reinstall: `git clone + bun install && bun link` (not `bun install -g`) |
 | Wrong `gbrain` binary installed | You got the npm squat package. Remove it and use `git clone + bun link` |
 | Claude can't see skills | Check that project's `CLAUDE.md` has a gstack section |
 | Stale CE skills | Run `bunx @every-env/compound-plugin cleanup --target <provider>` |
-| Cursor shows duplicate `gstack-*` slash commands | Remove any full checkout under `~/.agents/skills/gstack`, rerun `cd ~/.claude/skills/gstack && ./setup --host cursor`, then open a new Agent chat |
+| Cursor shows duplicate `gstack-*` slash commands | Remove legacy `~/.claude/skills/gstack` and any full checkout under `~/.agents/skills/gstack`, rerun `cd ~/.gstack/repos/gstack && ./setup --host auto`, then open a new Agent chat |
 
 ---
 

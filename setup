@@ -22,6 +22,9 @@ CODEX_SKILLS="$HOME/.codex/skills"
 CODEX_GSTACK="$CODEX_SKILLS/gstack"
 CURSOR_SKILLS="$HOME/.cursor/skills"
 GSTACK_GENERATED="$HOME/.gstack/generated"
+GSTACK_REPO_DIR="$HOME/.gstack/repos/gstack"
+LINK_PREFixed_SKILLS_TO_CODEX=1
+LINK_CLAUDE_SOURCE_SHIMS=1
 FACTORY_SKILLS="$HOME/.factory/skills"
 FACTORY_GSTACK="$FACTORY_SKILLS/gstack"
 OPENCODE_SKILLS="$HOME/.config/opencode/skills"
@@ -181,6 +184,13 @@ elif [ "$HOST" = "factory" ]; then
   INSTALL_FACTORY=1
 elif [ "$HOST" = "opencode" ]; then
   INSTALL_OPENCODE=1
+fi
+
+if [ "$INSTALL_CURSOR" -eq 1 ] && [ "$INSTALL_CODEX" -eq 1 ]; then
+  LINK_PREFixed_SKILLS_TO_CODEX=0
+fi
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  LINK_CLAUDE_SOURCE_SHIMS=0
 fi
 
 migrate_direct_codex_install() {
@@ -386,10 +396,86 @@ is_skill_discovery_parent() {
   return 1
 }
 
+is_canonical_gstack_repo() {
+  local dir canonical
+  dir="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  canonical="$(cd "$GSTACK_REPO_DIR" 2>/dev/null && pwd -P)" || return 1
+  [ "$dir" = "$canonical" ]
+}
+
+uses_external_generated_host_skills() {
+  is_skill_discovery_parent "$1" || is_canonical_gstack_repo "$1"
+}
+
 cleanup_bad_agents_mirror() {
   if [ -d "$HOME/.agents/skills/gstack/.git" ]; then
     log "Removing stale full gstack checkout from ~/.agents/skills/gstack..."
     rm -rf "$HOME/.agents/skills/gstack"
+  fi
+}
+
+migrate_gstack_repo_off_skill_roots() {
+  local dst="$GSTACK_REPO_DIR"
+  local legacy="$HOME/.claude/skills/gstack"
+  local legacy_real src_real
+
+  src_real="$(cd "$SOURCE_GSTACK_DIR" 2>/dev/null && pwd -P || true)"
+  legacy_real="$(cd "$legacy" 2>/dev/null && pwd -P || true)"
+  [ -n "$src_real" ] || return 0
+  is_skill_discovery_parent "$src_real" || return 0
+
+  mkdir -p "$(dirname "$dst")"
+  if [ -n "$legacy_real" ] && [ "$src_real" = "$legacy_real" ] && [ ! -e "$dst" ]; then
+    log "Migrating gstack checkout out of ~/.claude/skills to $dst..."
+    mv "$legacy" "$dst"
+  elif [ -d "$dst/.git" ] && [ -n "$legacy_real" ] && [ "$legacy_real" != "$(cd "$dst" 2>/dev/null && pwd -P || true)" ]; then
+    log "Removing legacy gstack checkout from ~/.claude/skills (canonical repo is $dst)..."
+    rm -rf "$legacy"
+  fi
+
+  if [ -d "$dst/.git" ]; then
+    SOURCE_GSTACK_DIR="$(cd "$dst" && pwd -P)"
+    INSTALL_GSTACK_DIR="$SOURCE_GSTACK_DIR"
+    BROWSE_BIN="$SOURCE_GSTACK_DIR/browse/dist/browse"
+  fi
+}
+
+remove_prefixed_skill_links() {
+  local skills_dir="$1"
+  local target
+
+  [ -d "$skills_dir" ] || return 0
+  for target in "$skills_dir"/gstack-*/; do
+    [ -e "$target" ] || continue
+    rm -rf "$target"
+  done
+}
+
+remove_claude_source_shims() {
+  local skills_dir="$1"
+  local skill_dir skill_name target
+
+  for skill_dir in "$SOURCE_GSTACK_DIR"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    skill_name="$(basename "$skill_dir")"
+    [ "$skill_name" = "node_modules" ] && continue
+    case "$skill_name" in gstack-*) continue ;; esac
+    target="$skills_dir/$skill_name"
+    if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
+      rm -rf "$target"
+    fi
+  done
+}
+
+cleanup_cursor_discovery_dupes() {
+  if [ "$INSTALL_CURSOR" -eq 1 ]; then
+    remove_prefixed_skill_links "$CODEX_SKILLS"
+  fi
+  if [ "$INSTALL_CURSOR" -eq 1 ] && [ "$LINK_CLAUDE_SOURCE_SHIMS" -eq 0 ]; then
+    remove_claude_source_shims "$HOME/.claude/skills"
+  fi
+  if [ -L "$CODEX_GSTACK/gstack" ]; then
+    rm -f "$CODEX_GSTACK/gstack"
   fi
 }
 
@@ -409,7 +495,7 @@ relocate_generated_skills_if_needed() {
   local store_label="$3"
   local gen_dir store_dir skill_dir skill_name
 
-  is_skill_discovery_parent "$gstack_dir" || return 0
+  uses_external_generated_host_skills "$gstack_dir" || return 0
   gen_dir="$gstack_dir/$host_subdir"
   [ -d "$gen_dir" ] || return 0
 
@@ -429,7 +515,7 @@ relocate_generated_skills_if_needed() {
 
 resolve_agents_skills_root() {
   local gstack_dir="$1"
-  if is_skill_discovery_parent "$gstack_dir"; then
+  if uses_external_generated_host_skills "$gstack_dir"; then
     echo "$GSTACK_GENERATED/agents-skills"
   else
     echo "$gstack_dir/.agents/skills"
@@ -438,7 +524,7 @@ resolve_agents_skills_root() {
 
 resolve_cursor_skills_root() {
   local gstack_dir="$1"
-  if is_skill_discovery_parent "$gstack_dir"; then
+  if uses_external_generated_host_skills "$gstack_dir"; then
     echo "$GSTACK_GENERATED/cursor-skills"
   else
     echo "$gstack_dir/.cursor/skills"
@@ -465,7 +551,7 @@ ensure_generated_host_skills() {
       ;;
   esac
 
-  if is_skill_discovery_parent "$gstack_dir"; then
+  if uses_external_generated_host_skills "$gstack_dir"; then
     if [ -d "$GSTACK_GENERATED/$store_label" ] && [ -n "$(find "$GSTACK_GENERATED/$store_label" -maxdepth 1 -name 'gstack-*' -print -quit 2>/dev/null)" ]; then
       prune_repo_generated_host_trees "$gstack_dir"
       return 0
@@ -483,7 +569,9 @@ ensure_generated_host_skills() {
   fi
 
   relocate_generated_skills_if_needed "$gstack_dir" "$host_subdir" "$store_label"
-  prune_repo_generated_host_trees "$gstack_dir"
+  if uses_external_generated_host_skills "$gstack_dir"; then
+    prune_repo_generated_host_trees "$gstack_dir"
+  fi
 }
 
 # ─── Helper: link Claude skill subdirectories into a skills parent directory ──
@@ -694,13 +782,44 @@ link_cursor_skill_dirs() {
 create_agents_sidecar() {
   local agents_gstack="$1"
   local repo_root="$SOURCE_GSTACK_DIR"
+  local src dst f
   mkdir -p "$agents_gstack"
 
-  # Sidecar directories that skills reference at runtime
-  for asset in bin browse review qa; do
-    local src="$SOURCE_GSTACK_DIR/$asset"
-    local dst="$agents_gstack/$asset"
-    if [ -d "$src" ] || [ -f "$src" ]; then
+  if [ -d "$repo_root/bin" ]; then
+    dst="$agents_gstack/bin"
+    if [ -L "$dst" ] || [ ! -e "$dst" ]; then
+      ln -snf "$repo_root/bin" "$dst"
+    fi
+  fi
+  if [ -d "$repo_root/browse/dist" ]; then
+    mkdir -p "$agents_gstack/browse"
+    dst="$agents_gstack/browse/dist"
+    if [ -L "$dst" ] || [ ! -e "$dst" ]; then
+      ln -snf "$repo_root/browse/dist" "$dst"
+    fi
+  fi
+  if [ -d "$repo_root/browse/bin" ]; then
+    mkdir -p "$agents_gstack/browse"
+    dst="$agents_gstack/browse/bin"
+    if [ -L "$dst" ] || [ ! -e "$dst" ]; then
+      ln -snf "$repo_root/browse/bin" "$dst"
+    fi
+  fi
+  mkdir -p "$agents_gstack/review"
+  for f in checklist.md design-checklist.md greptile-triage.md TODOS-format.md; do
+    src="$repo_root/review/$f"
+    dst="$agents_gstack/review/$f"
+    if [ -f "$src" ]; then
+      if [ -L "$dst" ] || [ ! -e "$dst" ]; then
+        ln -snf "$src" "$dst"
+      fi
+    fi
+  done
+  for f in templates/qa-report-template.md references/issue-taxonomy.md; do
+    src="$repo_root/qa/$f"
+    dst="$agents_gstack/qa/$f"
+    if [ -f "$src" ]; then
+      mkdir -p "$(dirname "$dst")"
       if [ -L "$dst" ] || [ ! -e "$dst" ]; then
         ln -snf "$src" "$dst"
       fi
@@ -929,6 +1048,8 @@ if [ "$SKILLS_BASENAME" = "skills" ] && [ "$SKILLS_PARENT_BASENAME" = ".agents" 
   CODEX_REPO_LOCAL=1
 fi
 
+migrate_gstack_repo_off_skill_roots
+
 if [ "$INSTALL_CLAUDE" -eq 1 ]; then
   if [ "$SKILLS_BASENAME" = "skills" ]; then
     # Clean up stale symlinks from the opposite prefix mode
@@ -940,7 +1061,9 @@ if [ "$INSTALL_CLAUDE" -eq 1 ]; then
     # Patch name: fields BEFORE creating symlinks so link_claude_skill_dirs
     # reads the correct (patched) name: values for symlink naming
     "$SOURCE_GSTACK_DIR/bin/gstack-patch-names" "$SOURCE_GSTACK_DIR" "$SKILL_PREFIX"
-    link_claude_skill_dirs "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
+    if [ "$LINK_CLAUDE_SOURCE_SHIMS" -eq 1 ]; then
+      link_claude_skill_dirs "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
+    fi
     # Self-healing: re-run gstack-relink to ensure name: fields and directory
     # names are consistent with the config. This catches cases where an interrupted
     # setup, stale git state, or gen:skill-docs left name: fields out of sync.
@@ -979,7 +1102,9 @@ if [ "$INSTALL_CLAUDE" -eq 1 ]; then
       cleanup_prefixed_claude_symlinks "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
     fi
     "$SOURCE_GSTACK_DIR/bin/gstack-patch-names" "$SOURCE_GSTACK_DIR" "$SKILL_PREFIX"
-    link_claude_skill_dirs "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
+    if [ "$LINK_CLAUDE_SOURCE_SHIMS" -eq 1 ]; then
+      link_claude_skill_dirs "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
+    fi
     GSTACK_RELINK="$SOURCE_GSTACK_DIR/bin/gstack-relink"
     if [ -x "$GSTACK_RELINK" ]; then
       GSTACK_SKILLS_DIR="$INSTALL_SKILLS_DIR" GSTACK_INSTALL_DIR="$SOURCE_GSTACK_DIR" "$GSTACK_RELINK" >/dev/null 2>&1 || true
@@ -1007,10 +1132,15 @@ if [ "$INSTALL_CODEX" -eq 1 ]; then
   # Skip runtime root creation for repo-local installs — the checkout IS the runtime root.
   # create_codex_runtime_root would create self-referential symlinks (bin → bin, etc.).
   if [ "$CODEX_REPO_LOCAL" -eq 0 ]; then
+    if [ "$LINK_PREFixed_SKILLS_TO_CODEX" -eq 0 ]; then
+      ensure_generated_host_skills "$SOURCE_GSTACK_DIR" codex || true
+    fi
     create_codex_runtime_root "$SOURCE_GSTACK_DIR" "$CODEX_GSTACK"
   fi
   # Install generated Codex-format skills (not Claude source dirs)
-  link_codex_skill_dirs "$SOURCE_GSTACK_DIR" "$CODEX_SKILLS"
+  if [ "$LINK_PREFixed_SKILLS_TO_CODEX" -eq 1 ]; then
+    link_codex_skill_dirs "$SOURCE_GSTACK_DIR" "$CODEX_SKILLS"
+  fi
 
   log "gstack ready (codex)."
   log "  browse: $BROWSE_BIN"
@@ -1025,6 +1155,8 @@ if [ "$INSTALL_CURSOR" -eq 1 ]; then
   log "  browse: $BROWSE_BIN"
   log "  cursor skills: $CURSOR_SKILLS"
 fi
+
+cleanup_cursor_discovery_dupes
 
 # 6. Install for Kiro CLI (copy from .agents/skills, rewrite paths)
 if [ "$INSTALL_KIRO" -eq 1 ]; then
