@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-eval "$(~/.claude/skills/gstack/bin/gstack-paths 2>/dev/null)" 2>/dev/null || true
-ROOT="${GSTACK_STATE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_resolve_root.sh
+source "${SCRIPT_DIR}/_resolve_root.sh"
 
 STATE="${ROOT}/.goal/state.json"
 PLAN="${ROOT}/.goal/plan.md"

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "goal/scripts/session_start_hook.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "goal/scripts/stop_hook.sh",
+        "loop_limit": 5
+      }
+    ]
+  }
+}

@@ -1,12 +1,11 @@
 ---
 name: goal
-preamble-tier: 2
-version: 1.0.0
+preamble-tier: 1
+version: 1.2.0
 description: |
-  Track a single, persistent objective per project. Set a goal, pause, resume,
-  or clear it. Survives across sessions via `.goal/state.json`. Use when asked
-  to "set the goal", "what are we working on", "goal status", "pause goal",
-  "clear goal", or "focus on this". (gstack)
+  Set, view, or manage a persistent goal for the current project.
+  Use when the user invokes a goal command, wants a long-running objective tracked,
+  asks to pause, resume, or clear the goal, or asks what goal is active. (gstack)
 triggers:
   - set goal
   - what are we working on
@@ -26,127 +25,72 @@ allowed-tools:
 
 # /goal — Active Objective Tracker
 
-You are a **Project Goal Manager**. You maintain one active, long-running objective
-per workspace. The goal survives across sessions — when the agent restarts, it
-reads `.goal/state.json` and knows what it was working on.
+**The 3-file workspace:** `.goal/` under the workspace root. Resolve the root with
+`GOAL_PROJECT_ROOT` when set, otherwise walk up to the git root, otherwise use the
+current working directory.
+1. **`state.json`:** Tracks the high-level objective (`active`, `paused`, or `complete`).
+2. **`plan.md`:** The structured task list, to-dos, and hypothesis space.
+3. **`resources.md`:** The user's unstructured inbox (ideas, links, code snippets).
 
-Three states: `active`, `paused`, `complete`.
-Three files on disk:
-- `.goal/state.json` — structured status (objective, status, timestamps)
-- `.goal/plan.md` — task list the agent works through
-- `.goal/resources.md` — async inbox for links, ideas, snippets
+## Command gate (run first)
 
----
-
-## Load active goal
-
-Read the goal state at the start of this skill:
+Do not treat `pause`, `resume`, `stop`, `clear`, `complete`, or `status` as a new
+objective. Your first action is one Bash call to `dispatch.sh` with the user's exact
+text after `/goal` (empty is fine).
 
 ```bash
-~/.claude/skills/gstack/goal/scripts/session-start.sh 2>/dev/null || echo "GOAL_STATUS: none"
-```
-
-If `GOAL_STATUS` is `none`, tell the user: "No active goal. Set one with `/goal set <objective>`."
-
-If a goal exists, display it to the user before proceeding.
-
----
-
-## Detect command
-
-Parse the user's input to determine which command to run:
-
-- `/goal` (no arguments) → **Read goal** (shown above)
-- `/goal set <objective>` → **Set goal**
-- `/goal pause` → **Pause goal**
-- `/goal resume` → **Resume goal**
-- `/goal complete` → **Complete goal**
-- `/goal clear` → **Clear goal**
-
----
-
-## Set goal
-
-Set a new objective or update the existing one.
-
-```bash
-~/.claude/skills/gstack/goal/scripts/set.sh "OBJECTIVE_TEXT"
-```
-
-Replace `OBJECTIVE_TEXT` with the user's objective. After setting:
-
-1. Read `.goal/plan.md` — if it's the default template, ask the user to outline the first few tasks.
-2. Tell the user: "Goal set to active: OBJECTIVE_TEXT. Track progress in `.goal/plan.md`. Drop resources in `.goal/resources.md`."
-
-If the user didn't provide an objective text, use AskUserQuestion:
-
-> What's the goal? Describe the objective in one sentence.
-
----
-
-## Pause goal
-
-```bash
-~/.claude/skills/gstack/goal/scripts/status.sh paused
-```
-
-Tell the user: "Goal paused. Resume with `/goal resume`."
-
----
-
-## Resume goal
-
-```bash
-~/.claude/skills/gstack/goal/scripts/status.sh active
-```
-
-Tell the user: "Goal resumed. Back to work on: GOAL_OBJECTIVE."
-
----
-
-## Complete goal
-
-Mark the goal as complete and trigger consolidation.
-
-```bash
-~/.claude/skills/gstack/goal/scripts/status.sh complete
-```
-
-Then consolidate learnings into the coordinator if it's available:
-
-```bash
-if [ -x ~/.claude/skills/gstack/coordinator/scripts/update.sh ]; then
-  ~/.claude/skills/gstack/coordinator/scripts/update.sh "goal_completion" "GOAL_OBJECTIVE" 2>/dev/null || true
+_GOAL_ARGS='REPLACE_WITH_USER_TEXT_AFTER_GOAL'
+_SKILL=""
+for _CAND in \
+  "${GOAL_SKILL_DIR:-}" \
+  "$HOME/.cursor/skills/gstack/goal" \
+  "$HOME/.cursor/skills/goal" \
+  "$HOME/.claude/skills/gstack/goal" \
+  "$(git rev-parse --show-toplevel 2>/dev/null)/goal"; do
+  [ -n "$_CAND" ] && [ -x "$_CAND/scripts/dispatch.sh" ] && _SKILL="$_CAND" && break
+done
+if [ -z "$_SKILL" ]; then
+  echo "goal scripts not found" >&2
+  exit 1
 fi
+bash "$_SKILL/scripts/dispatch.sh" "$_GOAL_ARGS"
 ```
 
-Tell the user: "Goal marked complete. Learnings consolidated into `.memory/coordinator_spoc.md`. Clear with `/goal clear` when ready."
+Replace `REPLACE_WITH_USER_TEXT_AFTER_GOAL` with the verbatim user text after `/goal`.
+Report the script output. Do not call `set.sh`, `status.sh`, `clear.sh`, or `read.sh`
+directly unless `dispatch.sh` failed.
 
----
+**Your responsibilities as the agent:**
+1. **Triage `resources.md`:** Whenever you start a session or work on the goal, check the
+   `[Resources Inbox]` provided in your context. If there is new content:
+   - **Explore it** with your tools.
+   - **Synthesize it** into actionable experiments or to-dos in `.goal/plan.md`.
+   - **Clean up** triaged content from `.goal/resources.md`.
+2. **Execute `plan.md`:** Work through the structured plan and track what succeeds or fails.
+3. **Consolidate to long-term memory:** If `/coordinator` is available, when the goal is
+   complete or a major milestone is reached, synthesize findings into
+   `.memory/coordinator_spoc.md` and clear the goal workspace.
 
-## Clear goal
+**Scripts** live in `goal/scripts/` next to this skill.
 
-Delete the goal workspace entirely.
+**Cursor hooks:** Copy `goal/hooks.cursor.json` into the project `.cursor/hooks.json`
+(or merge its `sessionStart` and `stop` entries). Project hooks run from the repo root.
+`sessionStart` injects goal context. `stop` may return `followup_message` to continue an
+active goal when the agent loop ends with unchecked plan items.
 
-```bash
-~/.claude/skills/gstack/goal/scripts/clear.sh
-```
+**Other hosts:** Wire `goal/scripts/session_start_hook.sh` on `SessionStart`. It emits
+Cursor `additional_context` or Claude/Codex `hookSpecificOutput` depending on stdin.
 
-Tell the user: "Goal cleared. Set a new one with `/goal set <objective>`."
+## Rules
 
----
+- If output contains `No goal set`, say so clearly.
+- Do not invent objectives; persist only what the user supplied.
+- Reject empty objectives; explain usage instead.
 
-## Resources inbox
+## Schema
 
-When the user drops links, ideas, or snippets into the chat and says "add to resources" or "inbox this":
-
-Append the content to `.goal/resources.md` using Write. Don't clutter — each entry should be a short line or bullet.
-
-```bash
-# Verify the resource was saved
-tail -5 "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.goal/resources.md"
-```
-
+`.goal/state.json` fields: `objective` (string), `status` (`active` | `paused` | `complete`),
+`created_at`, `updated_at` (ISO 8601 UTC).
 
 ## Completion Status
 

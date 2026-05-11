@@ -1,38 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-  echo "usage: status.sh <active|paused|complete>" >&2
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_resolve_root.sh
+source "${SCRIPT_DIR}/_resolve_root.sh"
 
-NEW_STATUS="${1}"
+RAW="${1:-}"
+NEXT="$(printf '%s' "${RAW}" | tr '[:upper:]' '[:lower:]')"
 
-eval "$(~/.claude/skills/gstack/bin/gstack-paths 2>/dev/null)" 2>/dev/null || true
-ROOT="${GSTACK_STATE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+case "${NEXT}" in
+  pause)
+    STATUS="paused"
+    ;;
+  active | resume)
+    STATUS="active"
+    ;;
+  complete)
+    STATUS="complete"
+    ;;
+  *)
+    echo "usage: status.sh pause|active|resume|complete" >&2
+    exit 1
+    ;;
+esac
 
 STATE="${ROOT}/.goal/state.json"
 
-python3 - "${STATE}" "${NEW_STATUS}" <<'PY'
-import json, sys
+if [[ ! -f "${STATE}" ]]; then
+  echo "error: no goal to update (missing ${STATE})" >&2
+  exit 1
+fi
+
+python3 - "${STATE}" "${STATUS}" <<'PY'
+import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 path = Path(sys.argv[1])
 new_status = sys.argv[2]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-if not path.is_file():
-    print("error: no goal set", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    data = json.loads(path.read_text(encoding="utf-8"))
-except json.JSONDecodeError:
-    data = {}
-
+data = json.loads(path.read_text(encoding="utf-8"))
 data["status"] = new_status
-data["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+data["updated_at"] = now
 path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
 
-echo "Status set to ${NEW_STATUS}."
+echo "Goal status updated to ${STATUS}."

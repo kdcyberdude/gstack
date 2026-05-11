@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=_resolve_root.sh
+source "${SCRIPT_DIR}/_resolve_root.sh"
+
 OBJECTIVE="${*}"
 OBJECTIVE="${OBJECTIVE#"${OBJECTIVE%%[![:space:]]*}"}"
 OBJECTIVE="${OBJECTIVE%"${OBJECTIVE##*[![:space:]]}"}"
@@ -10,9 +14,6 @@ if [[ -z "${OBJECTIVE}" ]]; then
   exit 1
 fi
 
-eval "$(~/.claude/skills/gstack/bin/gstack-paths 2>/dev/null)" 2>/dev/null || true
-ROOT="${GSTACK_STATE_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-
 GOAL_DIR="${ROOT}/.goal"
 STATE="${GOAL_DIR}/state.json"
 PLAN="${GOAL_DIR}/plan.md"
@@ -21,15 +22,18 @@ RESOURCES="${GOAL_DIR}/resources.md"
 mkdir -p "${GOAL_DIR}"
 
 if [[ ! -f "${PLAN}" ]]; then
-  printf '# Active Plan\n1. \n' > "${PLAN}"
+  echo "# Active Plan" > "${PLAN}"
+  echo "1. " >> "${PLAN}"
 fi
 
 if [[ ! -f "${RESOURCES}" ]]; then
-  printf '# Resources Inbox\nDrop links, ideas, and snippets here for the agent to triage.\n' > "${RESOURCES}"
+  echo "# Resources Inbox" > "${RESOURCES}"
+  echo "Drop links, ideas, and snippets here for the agent to triage." >> "${RESOURCES}"
 fi
 
 python3 - "${STATE}" "${OBJECTIVE}" <<'PY'
-import json, sys
+import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
