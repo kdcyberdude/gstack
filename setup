@@ -20,6 +20,8 @@ INSTALL_SKILLS_DIR="$(dirname "$INSTALL_GSTACK_DIR")"
 BROWSE_BIN="$SOURCE_GSTACK_DIR/browse/dist/browse"
 CODEX_SKILLS="$HOME/.codex/skills"
 CODEX_GSTACK="$CODEX_SKILLS/gstack"
+CURSOR_SKILLS="$HOME/.cursor/skills"
+GSTACK_GENERATED="$HOME/.gstack/generated"
 FACTORY_SKILLS="$HOME/.factory/skills"
 FACTORY_GSTACK="$FACTORY_SKILLS/gstack"
 OPENCODE_SKILLS="$HOME/.config/opencode/skills"
@@ -43,7 +45,7 @@ TEAM_MODE=0
 NO_TEAM_MODE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host) [ -z "$2" ] && echo "Missing value for --host (expected claude, codex, kiro, factory, opencode, openclaw, hermes, gbrain, or auto)" >&2 && exit 1; HOST="$2"; shift 2 ;;
+    --host) [ -z "$2" ] && echo "Missing value for --host (expected claude, codex, cursor, kiro, factory, opencode, openclaw, hermes, gbrain, or auto)" >&2 && exit 1; HOST="$2"; shift 2 ;;
     --host=*) HOST="${1#--host=}"; shift ;;
     --local) LOCAL_INSTALL=1; shift ;;
     --prefix)    SKILL_PREFIX=1; SKILL_PREFIX_FLAG=1; shift ;;
@@ -56,7 +58,7 @@ while [ $# -gt 0 ]; do
 done
 
 case "$HOST" in
-  claude|codex|kiro|factory|opencode|auto) ;;
+  claude|codex|cursor|kiro|factory|opencode|auto) ;;
   openclaw)
     echo ""
     echo "OpenClaw integration uses a different model — OpenClaw spawns Claude Code"
@@ -91,7 +93,7 @@ case "$HOST" in
     echo "GBrain setup and brain skills ship from the GBrain repo."
     echo ""
     exit 0 ;;
-  *) echo "Unknown --host value: $HOST (expected claude, codex, kiro, factory, opencode, openclaw, hermes, gbrain, or auto)" >&2; exit 1 ;;
+  *) echo "Unknown --host value: $HOST (expected claude, codex, cursor, kiro, factory, opencode, openclaw, hermes, gbrain, or auto)" >&2; exit 1 ;;
 esac
 
 # ─── Resolve skill prefix preference ─────────────────────────
@@ -152,23 +154,27 @@ fi
 # For auto: detect which agents are installed
 INSTALL_CLAUDE=0
 INSTALL_CODEX=0
+INSTALL_CURSOR=0
 INSTALL_KIRO=0
 INSTALL_FACTORY=0
 INSTALL_OPENCODE=0
 if [ "$HOST" = "auto" ]; then
   command -v claude >/dev/null 2>&1 && INSTALL_CLAUDE=1
   command -v codex >/dev/null 2>&1 && INSTALL_CODEX=1
+  [ -d "$HOME/.cursor" ] && INSTALL_CURSOR=1
   command -v kiro-cli >/dev/null 2>&1 && INSTALL_KIRO=1
   command -v droid >/dev/null 2>&1 && INSTALL_FACTORY=1
   command -v opencode >/dev/null 2>&1 && INSTALL_OPENCODE=1
   # If none found, default to claude
-  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_KIRO" -eq 0 ] && [ "$INSTALL_FACTORY" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ]; then
+  if [ "$INSTALL_CLAUDE" -eq 0 ] && [ "$INSTALL_CODEX" -eq 0 ] && [ "$INSTALL_CURSOR" -eq 0 ] && [ "$INSTALL_KIRO" -eq 0 ] && [ "$INSTALL_FACTORY" -eq 0 ] && [ "$INSTALL_OPENCODE" -eq 0 ]; then
     INSTALL_CLAUDE=1
   fi
 elif [ "$HOST" = "claude" ]; then
   INSTALL_CLAUDE=1
 elif [ "$HOST" = "codex" ]; then
   INSTALL_CODEX=1
+elif [ "$HOST" = "cursor" ]; then
+  INSTALL_CURSOR=1
 elif [ "$HOST" = "kiro" ]; then
   INSTALL_KIRO=1
 elif [ "$HOST" = "factory" ]; then
@@ -292,7 +298,7 @@ fi
 AGENTS_DIR="$SOURCE_GSTACK_DIR/.agents/skills"
 NEEDS_AGENTS_GEN=1
 
-if [ "$NEEDS_AGENTS_GEN" -eq 1 ] && [ "$NEEDS_BUILD" -eq 0 ]; then
+if [ "$NEEDS_AGENTS_GEN" -eq 1 ] && [ "$NEEDS_BUILD" -eq 0 ] && { [ "$INSTALL_CODEX" -eq 1 ] || [ "$INSTALL_KIRO" -eq 1 ]; }; then
   log "Generating .agents/ skill docs..."
   (
     cd "$SOURCE_GSTACK_DIR"
@@ -362,7 +368,123 @@ if ! ensure_playwright_browser; then
 fi
 
 # 3. Ensure ~/.gstack global state directory exists
-mkdir -p "$HOME/.gstack/projects"
+mkdir -p "$HOME/.gstack/projects" "$GSTACK_GENERATED"
+
+# ─── Helper: keep generated host skills out of Cursor/Claude discovery roots ──
+# Cursor walks ~/.claude/skills, ~/.cursor/skills, and ~/.agents/skills recursively.
+# When the checkout lives under one of those trees, generated host caches must not
+# remain inside the repo or they register the same slash command many times.
+is_skill_discovery_parent() {
+  local dir resolved root
+  dir="$(cd "$1" 2>/dev/null && pwd -P)" || return 1
+  for root in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.agents/skills" "$HOME/.cursor/skills"; do
+    resolved="$(cd "$root" 2>/dev/null && pwd -P)" || continue
+    case "$dir" in
+      "$resolved"|"$resolved"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+cleanup_bad_agents_mirror() {
+  if [ -d "$HOME/.agents/skills/gstack/.git" ]; then
+    log "Removing stale full gstack checkout from ~/.agents/skills/gstack..."
+    rm -rf "$HOME/.agents/skills/gstack"
+  fi
+}
+
+prune_repo_generated_host_trees() {
+  local gstack_dir="$1"
+  local hostdir
+  for hostdir in .cursor .agents .gbrain .opencode .openclaw .slate .factory .kiro .hermes; do
+    if [ -d "$gstack_dir/$hostdir/skills" ]; then
+      rm -rf "$gstack_dir/$hostdir/skills"
+    fi
+  done
+}
+
+relocate_generated_skills_if_needed() {
+  local gstack_dir="$1"
+  local host_subdir="$2"
+  local store_label="$3"
+  local gen_dir store_dir skill_dir skill_name
+
+  is_skill_discovery_parent "$gstack_dir" || return 0
+  gen_dir="$gstack_dir/$host_subdir"
+  [ -d "$gen_dir" ] || return 0
+
+  store_dir="$GSTACK_GENERATED/$store_label"
+  mkdir -p "$GSTACK_GENERATED"
+  rm -rf "$store_dir"
+  mkdir -p "$store_dir"
+
+  for skill_dir in "$gen_dir"/gstack*/; do
+    [ -d "$skill_dir" ] || continue
+    skill_name="$(basename "$skill_dir")"
+    cp -R "$skill_dir" "$store_dir/$skill_name"
+  done
+
+  rm -rf "$gen_dir"
+}
+
+resolve_agents_skills_root() {
+  local gstack_dir="$1"
+  if is_skill_discovery_parent "$gstack_dir"; then
+    echo "$GSTACK_GENERATED/agents-skills"
+  else
+    echo "$gstack_dir/.agents/skills"
+  fi
+}
+
+resolve_cursor_skills_root() {
+  local gstack_dir="$1"
+  if is_skill_discovery_parent "$gstack_dir"; then
+    echo "$GSTACK_GENERATED/cursor-skills"
+  else
+    echo "$gstack_dir/.cursor/skills"
+  fi
+}
+
+ensure_generated_host_skills() {
+  local gstack_dir="$1"
+  local host="$2"
+  local host_subdir store_label
+
+  case "$host" in
+    codex)
+      host_subdir=".agents/skills"
+      store_label="agents-skills"
+      ;;
+    cursor)
+      host_subdir=".cursor/skills"
+      store_label="cursor-skills"
+      ;;
+    *)
+      echo "ensure_generated_host_skills: unsupported host $host" >&2
+      return 1
+      ;;
+  esac
+
+  if is_skill_discovery_parent "$gstack_dir"; then
+    if [ -d "$GSTACK_GENERATED/$store_label" ] && [ -n "$(find "$GSTACK_GENERATED/$store_label" -maxdepth 1 -name 'gstack-*' -print -quit 2>/dev/null)" ]; then
+      prune_repo_generated_host_trees "$gstack_dir"
+      return 0
+    fi
+  fi
+
+  if [ ! -d "$gstack_dir/$host_subdir" ]; then
+    log "  Generating $host skill docs..."
+    ( cd "$gstack_dir" && bun run gen:skill-docs --host "$host" )
+  fi
+
+  if [ ! -d "$gstack_dir/$host_subdir" ]; then
+    echo "  warning: $host skill generation failed — run 'bun run gen:skill-docs --host $host' manually" >&2
+    return 1
+  fi
+
+  relocate_generated_skills_if_needed "$gstack_dir" "$host_subdir" "$store_label"
+  prune_repo_generated_host_trees "$gstack_dir"
+}
 
 # ─── Helper: link Claude skill subdirectories into a skills parent directory ──
 # Creates real directories (not symlinks) at the top level with a SKILL.md symlink
@@ -497,13 +619,12 @@ cleanup_prefixed_claude_symlinks() {
 link_codex_skill_dirs() {
   local gstack_dir="$1"
   local skills_dir="$2"
-  local agents_dir="$gstack_dir/.agents/skills"
+  local agents_dir
   local linked=()
 
-  if [ ! -d "$agents_dir" ]; then
-    echo "  Generating .agents/ skill docs..."
-    ( cd "$gstack_dir" && bun run gen:skill-docs --host codex )
-  fi
+  cleanup_bad_agents_mirror
+  ensure_generated_host_skills "$gstack_dir" codex || return 1
+  agents_dir="$(resolve_agents_skills_root "$gstack_dir")"
 
   if [ ! -d "$agents_dir" ]; then
     echo "  warning: .agents/skills/ generation failed — run 'bun run gen:skill-docs --host codex' manually" >&2
@@ -530,13 +651,49 @@ link_codex_skill_dirs() {
   fi
 }
 
+# ─── Helper: link generated Cursor skills into ~/.cursor/skills ───────────────
+link_cursor_skill_dirs() {
+  local gstack_dir="$1"
+  local skills_dir="$2"
+  local cursor_dir
+  local linked=()
+
+  cleanup_bad_agents_mirror
+  ensure_generated_host_skills "$gstack_dir" cursor || return 1
+  cursor_dir="$(resolve_cursor_skills_root "$gstack_dir")"
+  mkdir -p "$skills_dir"
+
+  for skill_dir in "$cursor_dir"/gstack*/; do
+    if [ -f "$skill_dir/SKILL.md" ]; then
+      skill_name="$(basename "$skill_dir")"
+      [ "$skill_name" = "gstack" ] && continue
+      [ "$skill_name" = "gstack-goal" ] && continue
+      target="$skills_dir/$skill_name"
+      if [ -L "$target" ] || [ ! -e "$target" ]; then
+        ln -snf "$skill_dir" "$target"
+        linked+=("$skill_name")
+      fi
+    fi
+  done
+
+  mkdir -p "$skills_dir/gstack"
+  if [ -L "$skills_dir/gstack/goal" ] || [ ! -e "$skills_dir/gstack/goal" ]; then
+    ln -snf "$gstack_dir/goal" "$skills_dir/gstack/goal"
+  fi
+  rm -f "$skills_dir/gstack-goal"
+
+  if [ ${#linked[@]} -gt 0 ]; then
+    echo "  linked skills: ${linked[*]}"
+  fi
+}
+
 # ─── Helper: create .agents/skills/gstack/ sidecar symlinks ──────────
 # Codex/Gemini/Cursor read skills from .agents/skills/. We link runtime
 # assets (bin/, browse/dist/, review/, qa/, etc.) so skill templates can
 # resolve paths like $SKILL_ROOT/review/design-checklist.md.
 create_agents_sidecar() {
-  local repo_root="$1"
-  local agents_gstack="$repo_root/.agents/skills/gstack"
+  local agents_gstack="$1"
+  local repo_root="$SOURCE_GSTACK_DIR"
   mkdir -p "$agents_gstack"
 
   # Sidecar directories that skills reference at runtime
@@ -569,7 +726,8 @@ create_agents_sidecar() {
 create_codex_runtime_root() {
   local gstack_dir="$1"
   local codex_gstack="$2"
-  local agents_dir="$gstack_dir/.agents/skills"
+  local agents_dir
+  agents_dir="$(resolve_agents_skills_root "$gstack_dir")"
 
   if [ -L "$codex_gstack" ]; then
     rm -f "$codex_gstack"
@@ -859,10 +1017,20 @@ if [ "$INSTALL_CODEX" -eq 1 ]; then
   log "  codex skills: $CODEX_SKILLS"
 fi
 
+# 5b. Install for Cursor
+if [ "$INSTALL_CURSOR" -eq 1 ]; then
+  mkdir -p "$CURSOR_SKILLS"
+  link_cursor_skill_dirs "$SOURCE_GSTACK_DIR" "$CURSOR_SKILLS"
+  log "gstack ready (cursor)."
+  log "  browse: $BROWSE_BIN"
+  log "  cursor skills: $CURSOR_SKILLS"
+fi
+
 # 6. Install for Kiro CLI (copy from .agents/skills, rewrite paths)
 if [ "$INSTALL_KIRO" -eq 1 ]; then
   KIRO_SKILLS="$HOME/.kiro/skills"
-  AGENTS_DIR="$SOURCE_GSTACK_DIR/.agents/skills"
+  ensure_generated_host_skills "$SOURCE_GSTACK_DIR" codex || true
+  AGENTS_DIR="$(resolve_agents_skills_root "$SOURCE_GSTACK_DIR")"
   mkdir -p "$KIRO_SKILLS"
 
   # Create gstack dir with symlinks for runtime assets, copy+sed for SKILL.md
@@ -939,7 +1107,7 @@ fi
 # The root Codex skill ends up pointing at $SOURCE_GSTACK_DIR/.agents/skills/gstack,
 # so the runtime assets must live there for both global and repo-local installs.
 if [ "$INSTALL_CODEX" -eq 1 ]; then
-  create_agents_sidecar "$SOURCE_GSTACK_DIR"
+  create_agents_sidecar "$(resolve_agents_skills_root "$SOURCE_GSTACK_DIR")/gstack"
 fi
 
 # 8. Run pending version migrations
