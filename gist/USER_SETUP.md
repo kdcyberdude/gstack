@@ -81,10 +81,7 @@ fi
 
 for root in "$HOME/.cursor/skills" "$HOME/.codex/skills" "$HOME/.claude/skills"; do
   [ -d "$root" ] || continue
-  for target in "$root"/gstack "$root"/gstack-*; do
-    [ -e "$target" ] || continue
-    rm -rf "$target"
-  done
+  find "$root" -maxdepth 1 \( -name 'gstack' -o -name 'gstack-*' \) -exec rm -rf {} +
 done
 
 rm -rf "$HOME/.claude/skills/gstack" "$HOME/.agents/skills/gstack"
