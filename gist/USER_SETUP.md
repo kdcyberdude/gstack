@@ -88,8 +88,9 @@ Execute each sequentially. The `./setup` script auto-detects providers, but use 
 ```bash
 cd "$HOME/.gstack/repos/gstack"
 
-# Run setup for ALL detected hosts (auto-detect mode)
-./setup
+# Run setup for ALL detected hosts (auto-detect mode).
+# setup defaults to Claude-only when --host is omitted; always pass --host auto here.
+./setup --host auto
 
 # Then explicitly target each detected provider if auto-detect misses any:
 # ./setup --host claude    # Claude Code
