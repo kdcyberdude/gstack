@@ -474,6 +474,9 @@ cleanup_cursor_discovery_dupes() {
   if [ "$INSTALL_CURSOR" -eq 1 ] && [ "$LINK_CLAUDE_SOURCE_SHIMS" -eq 0 ]; then
     remove_claude_source_shims "$HOME/.claude/skills"
   fi
+  if [ "$INSTALL_CURSOR" -eq 1 ] && { [ -L "$HOME/.claude/skills/gstack" ] || [ -d "$HOME/.claude/skills/gstack" ]; }; then
+    rm -rf "$HOME/.claude/skills/gstack"
+  fi
   if [ -L "$CODEX_GSTACK/gstack" ]; then
     rm -f "$CODEX_GSTACK/gstack"
   fi
@@ -1091,10 +1094,14 @@ if [ "$INSTALL_CLAUDE" -eq 1 ]; then
     CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
     CLAUDE_GSTACK_LINK="$CLAUDE_SKILLS_DIR/gstack"
     mkdir -p "$CLAUDE_SKILLS_DIR"
-    ln -snf "$SOURCE_GSTACK_DIR" "$CLAUDE_GSTACK_LINK"
-    log "  symlinked $CLAUDE_GSTACK_LINK -> $SOURCE_GSTACK_DIR"
     INSTALL_SKILLS_DIR="$CLAUDE_SKILLS_DIR"
-    INSTALL_GSTACK_DIR="$CLAUDE_GSTACK_LINK"
+    if [ "$INSTALL_CURSOR" -eq 0 ]; then
+      ln -snf "$SOURCE_GSTACK_DIR" "$CLAUDE_GSTACK_LINK"
+      log "  symlinked $CLAUDE_GSTACK_LINK -> $SOURCE_GSTACK_DIR"
+      INSTALL_GSTACK_DIR="$CLAUDE_GSTACK_LINK"
+    else
+      INSTALL_GSTACK_DIR="$SOURCE_GSTACK_DIR"
+    fi
     # Clean up stale symlinks from the opposite prefix mode
     if [ "$SKILL_PREFIX" -eq 1 ]; then
       cleanup_old_claude_symlinks "$SOURCE_GSTACK_DIR" "$INSTALL_SKILLS_DIR"
@@ -1113,8 +1120,10 @@ if [ "$INSTALL_CLAUDE" -eq 1 ]; then
     if [ "$SKILL_PREFIX" -eq 1 ]; then
       _OGB_LINK="$INSTALL_SKILLS_DIR/gstack-connect-chrome"
     fi
-    if [ -L "$_OGB_LINK" ] || [ ! -e "$_OGB_LINK" ]; then
-      ln -snf "gstack/open-gstack-browser" "$_OGB_LINK"
+    if [ "$INSTALL_CURSOR" -eq 0 ]; then
+      if [ -L "$_OGB_LINK" ] || [ ! -e "$_OGB_LINK" ]; then
+        ln -snf "gstack/open-gstack-browser" "$_OGB_LINK"
+      fi
     fi
     log "gstack ready (claude)."
     log "  browse: $BROWSE_BIN"
