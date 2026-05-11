@@ -459,7 +459,6 @@ remove_claude_source_shims() {
     [ -f "$skill_dir/SKILL.md" ] || continue
     skill_name="$(basename "$skill_dir")"
     [ "$skill_name" = "node_modules" ] && continue
-    case "$skill_name" in gstack-*) continue ;; esac
     target="$skills_dir/$skill_name"
     if [ -d "$target" ] && [ -L "$target/SKILL.md" ]; then
       rm -rf "$target"

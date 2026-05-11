@@ -67,6 +67,29 @@ Wait for user confirmation before installing any prerequisite.
 
 ## Phase 1 — Install gstack
 
+### Step 1.0 — Clean reinstall (optional, recommended when skills look duplicated)
+
+Remove prior gstack skill links from every discovery root, then reinstall from the canonical repo. This does **not** remove unrelated skills such as `checkpoint` or Compound Engineering.
+
+```bash
+REPO="$HOME/.gstack/repos/gstack"
+
+rm -rf "$HOME/.gstack/generated/cursor-skills" "$HOME/.gstack/generated/agents-skills"
+if [ -d "$REPO" ]; then
+  rm -rf "$REPO/.cursor/skills" "$REPO/.agents/skills"
+fi
+
+for root in "$HOME/.cursor/skills" "$HOME/.codex/skills" "$HOME/.claude/skills"; do
+  [ -d "$root" ] || continue
+  for target in "$root"/gstack "$root"/gstack-*; do
+    [ -e "$target" ] || continue
+    rm -rf "$target"
+  done
+done
+
+rm -rf "$HOME/.claude/skills/gstack" "$HOME/.agents/skills/gstack"
+```
+
 ### Step 1.1 — Clone or update gstack
 
 ```bash
